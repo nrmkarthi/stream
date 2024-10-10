@@ -49,8 +49,7 @@ def convolutional_auto_encoder():
 # Streamlit interface
 st.title('Convolutional Autoencoder for Fashion MNIST with Noisy Input')
 
-# Load dataset
-@st.cache
+# Load dataset without caching
 def load_dataset():
     BATCH_SIZE = 128
     train_dataset = tfds.load('fashion_mnist', as_supervised=True, split="train")
