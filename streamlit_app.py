@@ -3,97 +3,72 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image
 
-# Function to map images and apply noise
-def map_image_with_noise(image, label):
-    image = tf.cast(image, dtype=tf.float32) / 255.0
-    noise_factor = 0.5
-    noise = noise_factor * tf.random.normal(shape=image.shape)
-    image_noisy = image + noise
-    image_noisy = tf.clip_by_value(image_noisy, 0.0, 1.0)
-    return image_noisy, image
+# Function to normalize and flatten the image
+def map_image(image):
+    image = tf.cast(image, dtype=tf.float32)
+    image = image / 255.0
+    image = tf.reshape(image, shape=(784,))
+    return image
 
-# Function to define encoder
-def encoder(inputs):
-    conv_1 = tf.keras.layers.Conv2D(64, (3,3), activation='relu', padding='same')(inputs)
-    max_pool_1 = tf.keras.layers.MaxPooling2D((2,2))(conv_1)
-    conv_2 = tf.keras.layers.Conv2D(128, (3,3), activation='relu', padding='same')(max_pool_1)
-    max_pool_2 = tf.keras.layers.MaxPooling2D((2,2))(conv_2)
-    return max_pool_2
+# Load the dataset
+BATCH_SIZE = 128
+SHUFFLE_BUFFER_SIZE = 1024
 
-# Function to define bottleneck
-def bottle_neck(inputs):
-    bottleneck = tf.keras.layers.Conv2D(256, (3,3), activation='relu', padding='same')(inputs)
-    encoder_visualization = tf.keras.layers.Conv2D(1, (3,3), activation='sigmoid', padding='same')(bottleneck)
-    return bottleneck, encoder_visualization
+train_dataset = tfds.load('mnist', as_supervised=True, split="train")
+train_dataset = train_dataset.map(lambda x, y: map_image(x)).shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE).repeat()
 
-# Function to define decoder
-def decoder(inputs):
-    conv_1 = tf.keras.layers.Conv2D(128, (3,3), activation='relu', padding='same')(inputs)
-    up_sample_1 = tf.keras.layers.UpSampling2D((2,2))(conv_1)
-    conv_2 = tf.keras.layers.Conv2D(64, (3,3), activation='relu', padding='same')(up_sample_1)
-    up_sample_2 = tf.keras.layers.UpSampling2D((2,2))(conv_2)
-    conv_3 = tf.keras.layers.Conv2D(1, (3,3), activation='sigmoid', padding='same')(up_sample_2)
-    return conv_3
+# Define the autoencoder model
+def deep_autoencoder():
+    inputs = tf.keras.layers.Input(shape=(784,))
+    encoder = tf.keras.layers.Dense(units=128, activation='relu')(inputs)
+    encoder = tf.keras.layers.Dense(units=64, activation='relu')(encoder)
+    encoder = tf.keras.layers.Dense(units=32, activation='relu')(encoder)
 
-# Function to build the autoencoder model
-def convolutional_auto_encoder():
-    inputs = tf.keras.layers.Input(shape=(28, 28, 1,))
-    encoder_output = encoder(inputs)
-    bottleneck_output, encoder_visualization = bottle_neck(encoder_output)
-    decoder_output = decoder(bottleneck_output)
-    model = tf.keras.Model(inputs=inputs, outputs=decoder_output)
-    encoder_model = tf.keras.Model(inputs=inputs, outputs=encoder_visualization)
-    return model, encoder_model
+    decoder = tf.keras.layers.Dense(units=64, activation='relu')(encoder)
+    decoder = tf.keras.layers.Dense(units=128, activation='relu')(decoder)
+    decoder = tf.keras.layers.Dense(units=784, activation='sigmoid')(decoder)
 
-# Streamlit interface
-st.title('Convolutional Autoencoder for Fashion MNIST with Noisy Input')
+    return tf.keras.Model(inputs=inputs, outputs=encoder), tf.keras.Model(inputs=inputs, outputs=decoder)
 
-# Load dataset without caching
-def load_dataset():
-    BATCH_SIZE = 128
-    train_dataset = tfds.load('fashion_mnist', as_supervised=True, split="train")
-    train_dataset = train_dataset.map(map_image_with_noise).batch(BATCH_SIZE).repeat()
-    
-    test_dataset = tfds.load('fashion_mnist', as_supervised=True, split="test")
-    test_dataset = test_dataset.map(map_image_with_noise).batch(BATCH_SIZE).repeat()
-    
-    return train_dataset, test_dataset
+# Instantiate models
+deep_encoder_model, deep_autoencoder_model = deep_autoencoder()
 
-train_dataset, test_dataset = load_dataset()
+# Compile the model
+deep_autoencoder_model.compile(optimizer=tf.keras.optimizers.Adam(), loss='binary_crossentropy')
 
-# Build and compile the model
-convolutional_model, convolutional_encoder_model = convolutional_auto_encoder()
-convolutional_model.compile(optimizer=tf.keras.optimizers.Adam(), loss='binary_crossentropy')
+# Train the model
+train_steps = 60000 // BATCH_SIZE
+deep_autoencoder_model.fit(train_dataset, steps_per_epoch=train_steps, epochs=50)
 
-# Display model architecture
-st.subheader("Model Architecture")
-st.write(convolutional_model.summary())
+# Streamlit UI
+st.title("MNIST Autoencoder")
+st.write("Upload an image to see its encoded and decoded versions.")
 
-# Train the model button
-if st.button('Train the Model'):
-    train_steps = 60000 // 128
-    valid_steps = 10000 // 128
-    conv_model_history = convolutional_model.fit(train_dataset, steps_per_epoch=train_steps, validation_data=test_dataset, validation_steps=valid_steps, epochs=5)
-    st.success("Model trained successfully!")
+# File uploader
+uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
 
-# Function to display input, encoded, and decoded images
-def display_results(input_images, encoded_images, decoded_images):
-    fig, axes = plt.subplots(3, 10, figsize=(15, 5))
-    for i in range(10):
-        axes[0, i].imshow(input_images[i].reshape(28, 28), cmap='gray')
-        axes[0, i].axis('off')
-        axes[1, i].imshow(encoded_images[i].reshape(7, 7), cmap='gray')
-        axes[1, i].axis('off')
-        axes[2, i].imshow(decoded_images[i].reshape(28, 28), cmap='gray')
-        axes[2, i].axis('off')
-    st.pyplot(fig)
+if uploaded_file is not None:
+    # Process the uploaded image
+    image = Image.open(uploaded_file).convert("L")  # Convert to grayscale
+    image = image.resize((28, 28))  # Resize to 28x28
+    image_array = np.array(image)
+    image_array = image_array / 255.0  # Normalize
+    image_array = np.reshape(image_array, (1, 784))  # Flatten
 
-# Test the model button
-if st.button('Test the Model'):
-    test_batch = next(iter(test_dataset.take(1)))
-    input_images, _ = test_batch
-    input_images = input_images.numpy()[:10]
-    encoded_images = convolutional_encoder_model.predict(input_images)
-    decoded_images = convolutional_model.predict(input_images)
-    display_results(input_images, encoded_images, decoded_images)
+    # Make predictions
+    encoded = deep_encoder_model.predict(image_array)
+    decoded = deep_autoencoder_model.predict(image_array)
+
+    # Display the results
+    st.subheader("Original Image")
+    st.image(image, caption='Uploaded Image', use_column_width=True)
+
+    st.subheader("Encoded Output")
+    st.write(encoded)
+
+    decoded_image = np.reshape(decoded, (28, 28))
+    st.subheader("Decoded Image")
+    st.image(decoded_image, caption='Decoded Image', use_column_width=True)
+
