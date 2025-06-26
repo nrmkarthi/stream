@@ -5,70 +5,58 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 
-# Function to normalize and flatten the image
-def map_image(image):
-    image = tf.cast(image, dtype=tf.float32)
-    image = image / 255.0
-    image = tf.reshape(image, shape=(784,))
-    return image
+st.title("MNIST Autoencoder Demo")
 
-# Load the dataset
+# Normalize and reshape function
+def preprocess_image(image):
+    image = tf.cast(image, tf.float32) / 255.0
+    return tf.reshape(image, (784,))
+
+# Load MNIST dataset
 BATCH_SIZE = 128
 SHUFFLE_BUFFER_SIZE = 1024
 
-train_dataset = tfds.load('mnist', as_supervised=True, split="train")
-train_dataset = train_dataset.map(lambda x, y: map_image(x)).shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE).repeat()
+train_dataset = tfds.load('mnist', split='train', as_supervised=True)
+train_dataset = train_dataset.map(lambda x, y: preprocess_image(x)).shuffle(SHUFFLE_BUFFER_SIZE).batch(BATCH_SIZE).repeat()
 
-# Define the autoencoder model
-def deep_autoencoder():
-    inputs = tf.keras.layers.Input(shape=(784,))
-    encoder = tf.keras.layers.Dense(units=128, activation='relu')(inputs)
-    encoder = tf.keras.layers.Dense(units=64, activation='relu')(encoder)
-    encoder = tf.keras.layers.Dense(units=32, activation='relu')(encoder)
+# Define the autoencoder
+def build_autoencoder():
+    input_layer = tf.keras.Input(shape=(784,))
+    encoded = tf.keras.layers.Dense(128, activation='relu')(input_layer)
+    encoded = tf.keras.layers.Dense(64, activation='relu')(encoded)
+    encoded = tf.keras.layers.Dense(32, activation='relu')(encoded)
 
-    decoder = tf.keras.layers.Dense(units=64, activation='relu')(encoder)
-    decoder = tf.keras.layers.Dense(units=128, activation='relu')(decoder)
-    decoder = tf.keras.layers.Dense(units=784, activation='sigmoid')(decoder)
+    decoded = tf.keras.layers.Dense(64, activation='relu')(encoded)
+    decoded = tf.keras.layers.Dense(128, activation='relu')(decoded)
+    decoded = tf.keras.layers.Dense(784, activation='sigmoid')(decoded)
 
-    return tf.keras.Model(inputs=inputs, outputs=encoder), tf.keras.Model(inputs=inputs, outputs=decoder)
+    encoder = tf.keras.Model(inputs=input_layer, outputs=encoded)
+    autoencoder = tf.keras.Model(inputs=input_layer, outputs=decoded)
+    return encoder, autoencoder
 
-# Instantiate models
-deep_encoder_model, deep_autoencoder_model = deep_autoencoder()
+# Train model (for demo, you might skip this step and use pre-trained weights)
+encoder, autoencoder = build_autoencoder()
+autoencoder.compile(optimizer='adam', loss='binary_crossentropy')
 
-# Compile the model
-deep_autoencoder_model.compile(optimizer=tf.keras.optimizers.Adam(), loss='binary_crossentropy')
-
-# Train the model
 train_steps = 60000 // BATCH_SIZE
-deep_autoencoder_model.fit(train_dataset, steps_per_epoch=train_steps, epochs=50)
+autoencoder.fit(train_dataset, steps_per_epoch=train_steps, epochs=1)
 
-# Streamlit UI
-st.title("MNIST Autoencoder")
-st.write("Upload an image to see its encoded and decoded versions.")
-
-# File uploader
-uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
+# Upload image
+uploaded_file = st.file_uploader("Upload a 28x28 grayscale image (png/jpg/jpeg):", type=['png', 'jpg', 'jpeg'])
 
 if uploaded_file is not None:
-    # Process the uploaded image
-    image = Image.open(uploaded_file).convert("L")  # Convert to grayscale
-    image = image.resize((28, 28))  # Resize to 28x28
-    image_array = np.array(image)
-    image_array = image_array / 255.0  # Normalize
-    image_array = np.reshape(image_array, (1, 784))  # Flatten
+    image = Image.open(uploaded_file).convert('L').resize((28, 28))
+    image_array = np.array(image) / 255.0
+    image_array = image_array.reshape((1, 784))
 
-    # Make predictions
-    encoded = deep_encoder_model.predict(image_array)
-    decoded = deep_autoencoder_model.predict(image_array)
+    encoded_output = encoder.predict(image_array)
+    decoded_output = autoencoder.predict(image_array)
 
-    # Display the results
     st.subheader("Original Image")
-    st.image(image, caption='Uploaded Image', use_column_width=True)
+    st.image(image, width=150)
 
-    st.subheader("Encoded Output")
-    st.write(encoded)
+    st.subheader("Encoded Vector")
+    st.write(encoded_output)
 
-    decoded_image = np.reshape(decoded, (28, 28))
-    st.subheader("Decoded Image")
-    st.image(decoded_image, caption='Decoded Image', use_column_width=True)
-
+    st.subheader("Reconstructed Image")
+    st.image(decoded_output.reshape(28, 28), width=150)
